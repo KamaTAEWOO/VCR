@@ -191,6 +191,28 @@ class _StatusBar extends StatelessWidget {
                   );
                 },
               ),
+              // Claude Code launch button
+              Consumer<ConnectionProvider>(
+                builder: (context, connProvider, _) {
+                  if (!connProvider.isConnected) {
+                    return const SizedBox.shrink();
+                  }
+                  return IconButton(
+                    icon: Icon(
+                      Icons.auto_awesome,
+                      color: VcrColors.warning,
+                    ),
+                    onPressed: () {
+                      final wsService = context.read<WebSocketService>();
+                      wsService.sendShellInput(
+                        'claude --dangerously-skip-permissions\r',
+                      );
+                    },
+                    splashRadius: 20,
+                    tooltip: 'Launch Claude',
+                  );
+                },
+              ),
               // Restart button
               Consumer<ConnectionProvider>(
                 builder: (context, connProvider, _) {
@@ -586,6 +608,9 @@ class _ShellInputSection extends StatelessWidget {
       hintText: isClaudeMode ? 'Message Claude...' : 'Enter command...',
       promptText: isClaudeMode ? '\u25C6 ' : '\$ ',
       mode: isClaudeMode ? TerminalInputMode.claude : TerminalInputMode.shell,
+      onTab: isShellReady
+          ? () => wsService.sendShellInput('\t')
+          : null,
       onEsc: isShellReady
           ? () => wsService.sendShellInput('\x1b')
           : null,

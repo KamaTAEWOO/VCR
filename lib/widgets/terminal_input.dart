@@ -19,6 +19,7 @@ enum TerminalInputMode {
 class TerminalInput extends StatefulWidget {
   final void Function(String command) onSubmit;
   final VoidCallback? onEsc;
+  final VoidCallback? onTab;
   final bool enabled;
   final List<String> commandHistory;
   final String? hintText;
@@ -29,6 +30,7 @@ class TerminalInput extends StatefulWidget {
     super.key,
     required this.onSubmit,
     this.onEsc,
+    this.onTab,
     this.enabled = true,
     this.commandHistory = const [],
     this.hintText,
@@ -150,6 +152,14 @@ class _TerminalInputState extends State<TerminalInput> {
                 ),
               ),
             ),
+            if (widget.onTab != null)
+              IconButton(
+                icon: const Icon(Icons.keyboard_tab, size: 20),
+                color: VcrColors.textSecondary,
+                onPressed: widget.enabled ? widget.onTab : null,
+                splashRadius: 20,
+                tooltip: 'Tab',
+              ),
             if (widget.onEsc != null)
               IconButton(
                 icon: const Icon(Icons.cancel_outlined, size: 20),

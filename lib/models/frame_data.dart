@@ -36,8 +36,8 @@ class FrameData {
   static ({String? deviceId, String? deviceName, String? platform})
       parseDeviceFields(Map<String, dynamic> payload) {
     return (
-      deviceId: payload['device_id'] as String?,
-      deviceName: payload['device_name'] as String?,
+      deviceId: payload['deviceId'] as String?,
+      deviceName: payload['deviceName'] as String?,
       platform: payload['platform'] as String?,
     );
   }
