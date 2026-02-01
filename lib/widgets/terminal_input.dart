@@ -18,6 +18,7 @@ enum TerminalInputMode {
 /// Matches UI_SPEC.md section 4.2.
 class TerminalInput extends StatefulWidget {
   final void Function(String command) onSubmit;
+  final VoidCallback? onEsc;
   final bool enabled;
   final List<String> commandHistory;
   final String? hintText;
@@ -27,6 +28,7 @@ class TerminalInput extends StatefulWidget {
   const TerminalInput({
     super.key,
     required this.onSubmit,
+    this.onEsc,
     this.enabled = true,
     this.commandHistory = const [],
     this.hintText,
@@ -148,6 +150,14 @@ class _TerminalInputState extends State<TerminalInput> {
                 ),
               ),
             ),
+            if (widget.onEsc != null)
+              IconButton(
+                icon: const Icon(Icons.cancel_outlined, size: 20),
+                color: VcrColors.textSecondary,
+                onPressed: widget.enabled ? widget.onEsc : null,
+                splashRadius: 20,
+                tooltip: 'Esc',
+              ),
             IconButton(
               icon: Icon(Icons.send, color: promptColor),
               onPressed: widget.enabled ? () => _handleSubmit() : null,

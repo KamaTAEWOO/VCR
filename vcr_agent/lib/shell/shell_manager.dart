@@ -167,10 +167,12 @@ class ShellManager {
 
   /// Stop the shell process.
   ///
-  /// Kills the process and cancels all stream subscriptions.
+  /// Kills the process, cancels all stream subscriptions,
+  /// and clears the output buffer.
   Future<void> stop() async {
     _process?.kill();
     _cleanup();
+    clearBuffer();
   }
 
   /// Append [data] to the output buffer, trimming from the front if it

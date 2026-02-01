@@ -294,11 +294,16 @@ void main(List<String> args) async {
 
   webSocketServer.onClientDisconnected = (clientId) {
     _log('Client disconnected: $clientId');
-    // Stop all screen captures if no clients remain
+    // Stop all screen captures and shell if no clients remain
     if (webSocketServer.clientCount == 0) {
       _log('No clients connected, pausing all screen captures');
       for (final deviceId in activeCaptures.keys.toList()) {
         stopCaptureForDevice(deviceId);
+      }
+      // Stop the shell so a fresh one starts on next connection
+      if (shellManager.isActive) {
+        _log('Stopping shell (no clients)');
+        shellManager.stop();
       }
     }
   };

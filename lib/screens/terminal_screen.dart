@@ -134,49 +134,7 @@ class _StatusBar extends StatelessWidget {
               );
             },
           ),
-          // Terminal clear button
-          Consumer<TerminalProvider>(
-            builder: (context, terminalProvider, _) {
-              if (!terminalProvider.shellActive) {
-                return const SizedBox.shrink();
-              }
-              return IconButton(
-                icon: const Icon(
-                  Icons.clear_all,
-                  color: VcrColors.textSecondary,
-                ),
-                onPressed: () {
-                  // Write ANSI clear screen + cursor home to the terminal
-                  terminalProvider.shellTerminal?.write('\x1b[2J\x1b[H');
-                },
-                splashRadius: 20,
-                tooltip: 'Clear terminal',
-              );
-            },
-          ),
-          // Terminal restart button
-          Consumer<TerminalProvider>(
-            builder: (context, terminalProvider, _) {
-              if (!terminalProvider.shellActive) {
-                return const SizedBox.shrink();
-              }
-              return IconButton(
-                icon: const Icon(
-                  Icons.restart_alt,
-                  color: VcrColors.textSecondary,
-                ),
-                onPressed: () {
-                  final wsService = context.read<WebSocketService>();
-                  terminalProvider.setShellActive(false);
-                  terminalProvider.setShellActive(true);
-                  wsService.sendCommand('shell');
-                },
-                splashRadius: 20,
-                tooltip: 'Restart terminal',
-              );
-            },
-          ),
-          // Disconnect button
+          // Restart button (disconnect + reconnect → fresh shell)
           Consumer<ConnectionProvider>(
             builder: (context, connProvider, _) {
               if (!connProvider.isConnected) {
@@ -184,15 +142,15 @@ class _StatusBar extends StatelessWidget {
               }
               return IconButton(
                 icon: const Icon(
-                  Icons.link_off,
+                  Icons.power_settings_new,
                   color: VcrColors.error,
                 ),
                 onPressed: () {
                   final wsService = context.read<WebSocketService>();
-                  wsService.disconnect();
+                  wsService.reconnect();
                 },
                 splashRadius: 20,
-                tooltip: 'Disconnect',
+                tooltip: 'Restart',
               );
             },
           ),
@@ -745,6 +703,9 @@ class _ShellInputSection extends StatelessWidget {
       hintText: isClaudeMode ? 'Message Claude...' : 'Shell command...',
       promptText: isClaudeMode ? '\u25C6 ' : '\$ ',
       mode: isClaudeMode ? TerminalInputMode.claude : TerminalInputMode.shell,
+      onEsc: isShellReady
+          ? () => wsService.sendShellInput('\x1b')
+          : null,
       onSubmit: (command) {
         if (command.startsWith(':vcr ')) {
           // VCR command mode (secondary)

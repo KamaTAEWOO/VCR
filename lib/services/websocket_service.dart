@@ -177,6 +177,21 @@ class WebSocketService {
     terminalProvider.reset();
   }
 
+  /// Disconnect and immediately reconnect to the same Agent.
+  ///
+  /// This restarts the shell session because the Agent auto-starts
+  /// a fresh shell on each new client connection.
+  Future<void> reconnect() async {
+    final host = connectionProvider.host;
+    final port = connectionProvider.port;
+    if (host == null || port == null) return;
+
+    disconnect();
+    // Brief delay to let the server process the disconnect.
+    await Future.delayed(const Duration(milliseconds: 300));
+    await connect(host, port);
+  }
+
   /// Dispose all resources.
   void dispose() {
     _intentionalDisconnect = true;

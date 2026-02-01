@@ -114,10 +114,17 @@ class ScreenCapture {
         return;
       }
 
-      // Decode PNG
-      final image = img.decodePng(pngBytes);
+      // Decode image (format-agnostic: handles PNG, raw, etc.)
+      var image = img.decodeImage(pngBytes);
       if (image == null) {
-        _handleFailure('Failed to decode PNG from ${device.name}');
+        // Workaround: adb exec-out may corrupt binary data by converting
+        // \n (0x0A) to \r\n (0x0D 0x0A) on some devices/adb versions.
+        // Strip the injected \r bytes and retry.
+        final fixed = _fixAdbLineEndings(pngBytes);
+        image = img.decodeImage(fixed);
+      }
+      if (image == null) {
+        _handleFailure('Failed to decode screenshot from ${device.name}');
         return;
       }
 
@@ -170,6 +177,23 @@ class ScreenCapture {
     if (bytes.isEmpty) return null;
 
     return Uint8List.fromList(bytes);
+  }
+
+  /// Fix binary data corrupted by adb exec-out line-ending conversion.
+  ///
+  /// Some adb versions / device transports convert lone `\n` (0x0A) bytes
+  /// to `\r\n` (0x0D 0x0A) in the binary stream. This restores the original
+  /// data by removing `\r` bytes that appear immediately before `\n`.
+  static Uint8List _fixAdbLineEndings(Uint8List data) {
+    final out = BytesBuilder(copy: false);
+    for (var i = 0; i < data.length; i++) {
+      // Skip 0x0D when followed by 0x0A
+      if (data[i] == 0x0D && i + 1 < data.length && data[i + 1] == 0x0A) {
+        continue;
+      }
+      out.addByte(data[i]);
+    }
+    return out.toBytes();
   }
 
   /// Handle a capture failure, pausing after too many consecutive failures.
