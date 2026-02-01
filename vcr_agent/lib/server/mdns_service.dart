@@ -40,9 +40,13 @@ class MdnsService {
   /// Whether the service is currently registered
   bool get isRegistered => _process != null;
 
+  /// Whether to suppress log output.
+  final bool quiet;
+
   MdnsService({
     this.serviceName = 'VCR Agent',
     this.port = 9000,
+    this.quiet = false,
   });
 
   /// Register the mDNS service.
@@ -156,6 +160,7 @@ class MdnsService {
   }
 
   void _log(String message) {
+    if (quiet) return;
     final timestamp =
         DateTime.now().toIso8601String().substring(11, 19);
     print('[$timestamp] [mDNS] $message');

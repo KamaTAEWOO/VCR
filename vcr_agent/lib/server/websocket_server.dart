@@ -63,7 +63,10 @@ class WebSocketServer {
   /// List of connected client IDs
   List<String> get clientIds => _clients.keys.toList();
 
-  WebSocketServer({this.port = ConnectionDefaults.port});
+  /// Whether to suppress log output.
+  final bool quiet;
+
+  WebSocketServer({this.port = ConnectionDefaults.port, this.quiet = false});
 
   /// Start the WebSocket server.
   Future<void> start() async {
@@ -326,8 +329,9 @@ class WebSocketServer {
     _log('WebSocket server stopped');
   }
 
-  /// Log helper
+  /// Log helper. Suppressed when [quiet] is true.
   void _log(String message) {
+    if (quiet) return;
     final timestamp =
         DateTime.now().toIso8601String().substring(11, 19);
     print('[$timestamp] [WS] $message');

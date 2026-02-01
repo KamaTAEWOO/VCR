@@ -84,16 +84,20 @@ class ShellManager {
     _stdoutSub = const Utf8Decoder(allowMalformed: true)
         .bind(_process!.stdout)
         .listen((data) {
-      _appendToBuffer(data);
-      onOutput?.call(data, 'stdout');
+      final filtered = _filterOutput(data);
+      if (filtered.isEmpty) return;
+      _appendToBuffer(filtered);
+      onOutput?.call(filtered, 'stdout');
     });
 
     // Listen to stderr
     _stderrSub = const Utf8Decoder(allowMalformed: true)
         .bind(_process!.stderr)
         .listen((data) {
-      _appendToBuffer(data);
-      onOutput?.call(data, 'stderr');
+      final filtered = _filterOutput(data);
+      if (filtered.isEmpty) return;
+      _appendToBuffer(filtered);
+      onOutput?.call(filtered, 'stderr');
     });
 
     // Monitor process exit
@@ -154,13 +158,13 @@ class ShellManager {
 
   /// Send a stty resize command silently.
   ///
-  /// Temporarily disables echo, runs stty to set dimensions,
-  /// re-enables echo, then erases the current line to hide any residue.
+  /// The command text will be echoed by the PTY, but the output filter
+  /// ([_filterOutput]) strips any lines containing `stty` so the client
+  /// never sees them. A trailing `\r\033[K` erases the echoed line in
+  /// the terminal buffer as well.
   void _sendSilentResize(int columns, int rows) {
     _process!.stdin.add(utf8.encode(
-      'stty -echo 2>/dev/null;'
       'stty columns $columns rows $rows 2>/dev/null;'
-      'stty echo 2>/dev/null;'
       'printf "\\r\\033[K" 2>/dev/null\n',
     ));
   }
@@ -173,6 +177,31 @@ class ShellManager {
     _process?.kill();
     _cleanup();
     clearBuffer();
+  }
+
+  /// Patterns matching internal resize commands that should be hidden.
+  ///
+  /// The PTY echoes the stty+printf command we send. Because data arrives
+  /// in arbitrary chunks, the echo may be split across multiple reads:
+  ///   chunk1: "stty columns 50 rows "        (caught by _sttyPattern)
+  ///   chunk2: "55 2>/dev/null;printf ..."     (caught by _resizeCleanupPattern)
+  ///   chunk3: "\r\033[K" 2>/dev/null"         (caught by _resizeCleanupPattern)
+  static final _sttyPattern = RegExp(r'stty\s');
+  static final _resizeCleanupPattern = RegExp(r'printf.*033\[K|\\r\\033\[K|\\033\[K');
+
+  /// Filter out lines containing internal stty resize commands and their
+  /// printf cleanup fragments.
+  static String _filterOutput(String data) {
+    if (!data.contains('stty') && !data.contains('033[K')) return data;
+    final lines = data.split('\n');
+    final filtered = lines.where((line) {
+      // Strip ANSI escapes for matching purposes.
+      final clean = line.replaceAll(RegExp(r'\x1b\[[0-9;?]*[a-zA-Z]'), '');
+      if (_sttyPattern.hasMatch(clean)) return false;
+      if (_resizeCleanupPattern.hasMatch(clean)) return false;
+      return true;
+    }).toList();
+    return filtered.join('\n');
   }
 
   /// Append [data] to the output buffer, trimming from the front if it

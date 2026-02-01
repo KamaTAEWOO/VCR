@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:nsd/nsd.dart' as nsd;
 
 import '../core/constants.dart';
@@ -43,8 +42,7 @@ class DiscoveryService {
       _timeoutTimer = Timer(NetworkConstants.mdnsTimeout, () {
         stopDiscovery();
       });
-    } catch (e) {
-      debugPrint('mDNS discovery failed: $e');
+    } catch (_) {
       connectionProvider.setSearching(false);
     }
   }
@@ -73,8 +71,8 @@ class DiscoveryService {
         await nsd.stopDiscovery(_discovery!);
         _discovery = null;
       }
-    } catch (e) {
-      debugPrint('Failed to stop mDNS discovery: $e');
+    } catch (_) {
+      // Ignore close errors.
     }
 
     if (!_disposed) {

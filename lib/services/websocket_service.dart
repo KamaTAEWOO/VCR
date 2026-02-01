@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:vcr_shared/models/foreground_process_data.dart';
@@ -62,7 +62,6 @@ class WebSocketService {
     connectionProvider.setConnecting(host, port);
 
     final uri = Uri.parse('ws://$host:$port/ws');
-    debugPrint('[WS] Connecting to $uri ...');
 
     try {
       _channel = WebSocketChannel.connect(uri);
@@ -78,8 +77,6 @@ class WebSocketService {
         },
       );
 
-      debugPrint('[WS] Connected to $uri');
-
       // Start listening for incoming messages.
       _subscription = _channel!.stream.listen(
         _onMessage,
@@ -90,7 +87,6 @@ class WebSocketService {
       // Start ping keepalive timer.
       _startPingTimer();
     } catch (e) {
-      debugPrint('[WS] Connection failed: $e');
       _cleanup();
       connectionProvider.setDisconnected();
       throw _formatConnectionError(e);
@@ -342,7 +338,6 @@ class WebSocketService {
 
     previewProvider.updateDeviceList(devices);
 
-    debugPrint('[WS] Received device list: ${devices.length} device(s)');
   }
 
   void _handleStatus(VcrMessage msg) {
@@ -388,7 +383,6 @@ class WebSocketService {
   // =========================================================================
 
   void _onError(dynamic error) {
-    debugPrint('[WS] Stream error: $error');
     _handleDisconnect();
   }
 
@@ -408,7 +402,6 @@ class WebSocketService {
 
     if (_intentionalDisconnect) return;
 
-    debugPrint('[WS] Connection lost. Scheduling reconnect...');
     previewProvider.setAgentState(AgentState.disconnected);
     previewProvider.reset();
     terminalProvider.reset();

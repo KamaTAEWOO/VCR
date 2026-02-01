@@ -38,6 +38,12 @@ void main(List<String> args) async {
       help: 'Working directory for Flutter projects',
     )
     ..addFlag(
+      'quiet',
+      abbr: 'q',
+      negatable: false,
+      help: 'Suppress log output (only show errors)',
+    )
+    ..addFlag(
       'help',
       abbr: 'h',
       negatable: false,
@@ -64,12 +70,13 @@ void main(List<String> args) async {
 
   final port = int.tryParse(results.option('port')!) ?? ConnectionDefaults.port;
   final projectDir = results.option('project-dir')!;
+  _quiet = results.flag('quiet');
 
   _printBanner();
   _log('Starting VCR Agent v${ConnectionDefaults.agentVersion}');
   _log('Working directory: $projectDir');
   _log('Port: $port');
-  print('');
+  if (!_quiet) print('');
 
   // --- 2. Initialize Components ---
   final commandParser = CommandParser();
@@ -77,8 +84,8 @@ void main(List<String> args) async {
   final projectManager = ProjectManager();
   final flutterController = FlutterController();
   final deviceController = DeviceController();
-  final webSocketServer = WebSocketServer(port: port);
-  final mdnsService = MdnsService(port: port);
+  final webSocketServer = WebSocketServer(port: port, quiet: _quiet);
+  final mdnsService = MdnsService(port: port, quiet: _quiet);
   final shellManager = ShellManager();
 
   // Current agent state
@@ -373,13 +380,13 @@ void main(List<String> args) async {
     (_) => scanAndUpdateDevices(),
   );
 
-  print('');
+  if (!_quiet) print('');
   _log('VCR Agent is ready. Waiting for connections...');
   _log('Press Ctrl+C to stop.');
 
   // --- Graceful Shutdown ---
   ProcessSignal.sigint.watch().listen((_) async {
-    print('');
+    if (!_quiet) print('');
     _log('Shutting down...');
     deviceScanTimer?.cancel();
     for (final capture in activeCaptures.values) {
@@ -831,8 +838,9 @@ bool _deviceListsEqual(List<DeviceInfo> a, List<DeviceInfo> b) {
   return aIds.length == bIds.length && aIds.containsAll(bIds);
 }
 
-/// Print the VCR Agent ASCII banner.
+/// Print the VCR Agent ASCII banner. Suppressed when `--quiet`.
 void _printBanner() {
+  if (_quiet) return;
   print('''
  __     _______ ____
  \\ \\   / / ____|  _ \\
@@ -844,8 +852,12 @@ void _printBanner() {
 ''');
 }
 
-/// Log with timestamp.
+/// Whether to suppress log output.
+bool _quiet = false;
+
+/// Log with timestamp. Suppressed when `--quiet` is active.
 void _log(String message) {
+  if (_quiet) return;
   final timestamp = DateTime.now().toIso8601String().substring(11, 19);
   print('[$timestamp] $message');
 }

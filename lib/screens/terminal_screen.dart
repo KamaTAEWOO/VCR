@@ -12,57 +12,103 @@ import '../providers/connection_provider.dart';
 import '../providers/preview_provider.dart';
 import '../providers/terminal_provider.dart';
 import '../services/websocket_service.dart';
-import '../widgets/preview_viewer.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/terminal_input.dart';
 
-/// Main terminal screen: status bar + xterm terminal view + shell input.
+/// Main terminal screen with PageView-based navigation.
 ///
-/// The xterm TerminalView is the primary output area. Shell is always active.
-/// Optionally shows a mini preview panel (1/3 width) on the right.
-/// Matches UI_SPEC_V2.md section 3.
-class TerminalScreen extends StatelessWidget {
+/// Page 0: Terminal (xterm shell view)
+/// Page 1+: Connected device previews (one device per page)
+///
+/// The status bar shows page indicator dots. The shell input section
+/// is only visible when on the terminal page (page 0).
+class TerminalScreen extends StatefulWidget {
   const TerminalScreen({super.key});
+
+  @override
+  State<TerminalScreen> createState() => _TerminalScreenState();
+}
+
+class _TerminalScreenState extends State<TerminalScreen> {
+  late PageController _pageController;
+  int _currentPage = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: Column(
-          children: [
-            const _StatusBar(),
-            const Divider(height: 1, color: VcrColors.bgTertiary),
-            Expanded(
-              child: Consumer<PreviewProvider>(
-                builder: (context, previewProvider, _) {
-                  if (previewProvider.showMiniPreview) {
-                    return Row(
-                      children: [
-                        const Expanded(
-                          flex: 2,
-                          child: _ShellMainArea(),
-                        ),
-                        Container(
-                          width: 1,
-                          color: VcrColors.bgTertiary,
-                        ),
-                        Expanded(
-                          flex: 1,
-                          child: _MiniPreviewPanel(
-                            previewProvider: previewProvider,
-                          ),
-                        ),
-                      ],
+        child: Consumer<PreviewProvider>(
+          builder: (context, previewProvider, _) {
+            final devices = previewProvider.devices;
+            final pageCount = 1 + devices.length;
+
+            // If devices were removed and current page is out of bounds, reset.
+            if (_currentPage >= pageCount) {
+              _currentPage = 0;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (_pageController.hasClients) {
+                  _pageController.jumpToPage(0);
+                }
+              });
+            }
+
+            return Column(
+              children: [
+                _StatusBar(
+                  currentPage: _currentPage,
+                  pageCount: pageCount,
+                  onDotTapped: (index) {
+                    _pageController.animateToPage(
+                      index,
+                      duration: VcrDurations.fadeIn,
+                      curve: Curves.easeInOut,
                     );
-                  }
-                  return const _ShellMainArea();
-                },
-              ),
-            ),
-            const Divider(height: 1, color: VcrColors.bgTertiary),
-            const _ShellInputSection(),
-          ],
+                  },
+                ),
+                const Divider(height: 1, color: VcrColors.bgTertiary),
+                Expanded(
+                  child: PageView.builder(
+                    controller: _pageController,
+                    itemCount: pageCount,
+                    physics: const BouncingScrollPhysics(),
+                    onPageChanged: (index) {
+                      setState(() {
+                        _currentPage = index;
+                      });
+                    },
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        return const _ShellMainArea();
+                      }
+                      final device = devices[index - 1];
+                      return _DevicePreviewPage(
+                        device: device,
+                        frameBytes:
+                            previewProvider.getFrameForDevice(device.id),
+                      );
+                    },
+                  ),
+                ),
+                if (_currentPage == 0) ...[
+                  const Divider(height: 1, color: VcrColors.bgTertiary),
+                  const _ShellInputSection(),
+                ],
+              ],
+            );
+          },
         ),
       ),
     );
@@ -70,11 +116,19 @@ class TerminalScreen extends StatelessWidget {
 }
 
 // =============================================================================
-// Status Bar (V2 — simplified: connection status + host IP + preview button)
+// Status Bar (with page indicator dots)
 // =============================================================================
 
 class _StatusBar extends StatelessWidget {
-  const _StatusBar();
+  final int currentPage;
+  final int pageCount;
+  final ValueChanged<int> onDotTapped;
+
+  const _StatusBar({
+    required this.currentPage,
+    required this.pageCount,
+    required this.onDotTapped,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -84,98 +138,269 @@ class _StatusBar extends StatelessWidget {
         horizontal: Spacing.md,
         vertical: Spacing.sm,
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // Connection status indicator
-          Consumer<PreviewProvider>(
-            builder: (context, previewProvider, _) {
-              return StatusIndicator(state: previewProvider.agentState);
-            },
+          Row(
+            children: [
+              // Connection status indicator
+              Consumer<PreviewProvider>(
+                builder: (context, previewProvider, _) {
+                  return StatusIndicator(state: previewProvider.agentState);
+                },
+              ),
+              const SizedBox(width: Spacing.md),
+              // Host IP (or "Disconnected")
+              Expanded(
+                child: Consumer<ConnectionProvider>(
+                  builder: (context, connProvider, _) {
+                    return Text(
+                      connProvider.host ?? 'Disconnected',
+                      style: VcrTypography.bodyMedium.copyWith(
+                        color: VcrColors.textSecondary,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    );
+                  },
+                ),
+              ),
+              // Claude mode badge
+              Consumer<TerminalProvider>(
+                builder: (context, terminalProvider, _) {
+                  if (!terminalProvider.isClaudeMode) {
+                    return const SizedBox.shrink();
+                  }
+                  return Container(
+                    margin: const EdgeInsets.only(right: Spacing.sm),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.sm,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: VcrColors.warning.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(Radii.sm),
+                    ),
+                    child: Text(
+                      'Claude',
+                      style: VcrTypography.labelMedium.copyWith(
+                        color: VcrColors.warning,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  );
+                },
+              ),
+              // Restart button
+              Consumer<ConnectionProvider>(
+                builder: (context, connProvider, _) {
+                  if (!connProvider.isConnected) {
+                    return const SizedBox.shrink();
+                  }
+                  return IconButton(
+                    icon: const Icon(
+                      Icons.power_settings_new,
+                      color: VcrColors.error,
+                    ),
+                    onPressed: () {
+                      final wsService = context.read<WebSocketService>();
+                      wsService.reconnect();
+                    },
+                    splashRadius: 20,
+                    tooltip: 'Restart',
+                  );
+                },
+              ),
+            ],
           ),
-          const SizedBox(width: Spacing.md),
-          // Host IP (or "Disconnected")
-          Expanded(
-            child: Consumer<ConnectionProvider>(
-              builder: (context, connProvider, _) {
-                return Text(
-                  connProvider.host ?? 'Disconnected',
-                  style: VcrTypography.bodyMedium.copyWith(
-                    color: VcrColors.textSecondary,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                );
-              },
+          // Page indicator dots (only when there are device pages)
+          if (pageCount > 1) ...[
+            const SizedBox(height: Spacing.xs),
+            _PageIndicatorDots(
+              count: pageCount,
+              currentIndex: currentPage,
+              onDotTapped: onDotTapped,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Page Indicator Dots
+// =============================================================================
+
+class _PageIndicatorDots extends StatelessWidget {
+  final int count;
+  final int currentIndex;
+  final ValueChanged<int>? onDotTapped;
+
+  const _PageIndicatorDots({
+    required this.count,
+    required this.currentIndex,
+    this.onDotTapped,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: List.generate(count, (index) {
+        final isActive = index == currentIndex;
+        return GestureDetector(
+          onTap: onDotTapped != null ? () => onDotTapped!(index) : null,
+          child: AnimatedContainer(
+            duration: VcrDurations.fadeIn,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            width: isActive ? 20 : 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: isActive
+                  ? (index == 0 ? VcrColors.accent : VcrColors.success)
+                  : VcrColors.textMuted.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(Radii.full),
             ),
           ),
-          // Claude mode badge
-          Consumer<TerminalProvider>(
-            builder: (context, terminalProvider, _) {
-              if (!terminalProvider.isClaudeMode) {
-                return const SizedBox.shrink();
-              }
-              return Container(
-                margin: const EdgeInsets.only(right: Spacing.sm),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: Spacing.sm,
-                  vertical: 2,
-                ),
-                decoration: BoxDecoration(
-                  color: VcrColors.warning.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(Radii.sm),
-                ),
-                child: Text(
-                  'Claude',
-                  style: VcrTypography.labelMedium.copyWith(
-                    color: VcrColors.warning,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              );
-            },
+        );
+      }),
+    );
+  }
+}
+
+// =============================================================================
+// Device Preview Page (one device per page in the PageView)
+// =============================================================================
+
+class _DevicePreviewPage extends StatelessWidget {
+  final DeviceInfo device;
+  final Uint8List? frameBytes;
+
+  const _DevicePreviewPage({
+    required this.device,
+    required this.frameBytes,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // Fullscreen device frame
+        Positioned.fill(
+          child: Container(
+            color: Colors.black,
+            child: Center(
+              child: InteractiveViewer(
+                minScale: 0.5,
+                maxScale: 5.0,
+                child: frameBytes != null
+                    ? Image.memory(
+                        frameBytes!,
+                        fit: BoxFit.contain,
+                        gaplessPlayback: true,
+                      )
+                    : _buildPlaceholder(),
+              ),
+            ),
           ),
-          // Restart button (disconnect + reconnect → fresh shell)
-          Consumer<ConnectionProvider>(
-            builder: (context, connProvider, _) {
-              if (!connProvider.isConnected) {
-                return const SizedBox.shrink();
-              }
-              return IconButton(
-                icon: const Icon(
-                  Icons.power_settings_new,
-                  color: VcrColors.error,
-                ),
-                onPressed: () {
-                  final wsService = context.read<WebSocketService>();
-                  wsService.reconnect();
-                },
-                splashRadius: 20,
-                tooltip: 'Restart',
-              );
-            },
-          ),
-          // Preview button (only when devices are connected)
-          Consumer<PreviewProvider>(
-            builder: (context, previewProvider, _) {
-              if (previewProvider.deviceCount <= 0) {
-                return const SizedBox.shrink();
-              }
-              return IconButton(
-                icon: Icon(
-                  previewProvider.showMiniPreview
-                      ? Icons.fullscreen_exit
-                      : Icons.phone_android,
+        ),
+        // Device name + LIVE overlay (top)
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black54,
+                  Colors.transparent,
+                ],
+              ),
+            ),
+            padding: const EdgeInsets.symmetric(
+              horizontal: Spacing.md,
+              vertical: Spacing.sm,
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.phone_android,
+                  size: 16,
                   color: VcrColors.accent,
                 ),
-                onPressed: () {
-                  previewProvider.toggleMiniPreview();
-                },
-                splashRadius: 20,
-                tooltip: previewProvider.showMiniPreview
-                    ? 'Hide preview'
-                    : 'Show preview',
-              );
-            },
+                const SizedBox(width: Spacing.xs),
+                Expanded(
+                  child: Text(
+                    device.name,
+                    style: VcrTypography.bodyMedium.copyWith(
+                      color: VcrColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+                if (device.isCapturing)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: Spacing.sm,
+                      vertical: Spacing.xs,
+                    ),
+                    decoration: BoxDecoration(
+                      color: VcrColors.success.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(Radii.full),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            color: VcrColors.success,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: Spacing.xs),
+                        Text(
+                          'LIVE',
+                          style: VcrTypography.labelMedium.copyWith(
+                            color: VcrColors.success,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.phone_android,
+            size: 64,
+            color: VcrColors.textMuted,
+          ),
+          const SizedBox(height: Spacing.md),
+          Text(
+            'Waiting for screen capture...',
+            style: VcrTypography.bodyMedium.copyWith(
+              color: VcrColors.textMuted,
+            ),
           ),
         ],
       ),
@@ -231,6 +456,11 @@ class _ShellTerminalView extends StatefulWidget {
 class _ShellTerminalViewState extends State<_ShellTerminalView> {
   Timer? _resizeDebounce;
 
+  /// Track the last sent dimensions to avoid duplicate resize commands
+  /// (e.g. when PageView rebuilds the terminal page during swipes).
+  int _lastSentColumns = 0;
+  int _lastSentRows = 0;
+
   @override
   void dispose() {
     _resizeDebounce?.cancel();
@@ -259,9 +489,13 @@ class _ShellTerminalViewState extends State<_ShellTerminalView> {
     }
     final wsService = context.read<WebSocketService>();
     terminal.onResize = (width, height, pixelWidth, pixelHeight) {
+      // Skip if dimensions haven't actually changed.
+      if (width == _lastSentColumns && height == _lastSentRows) return;
       // Debounce resize to avoid spamming during keyboard animation.
       _resizeDebounce?.cancel();
       _resizeDebounce = Timer(const Duration(milliseconds: 300), () {
+        _lastSentColumns = width;
+        _lastSentRows = height;
         wsService.sendShellResize(width, height);
       });
     };
@@ -330,357 +564,6 @@ class _ShellExitOverlay extends StatelessWidget {
 }
 
 // =============================================================================
-// Mini Preview Panel (Multi-device)
-// =============================================================================
-
-class _MiniPreviewPanel extends StatelessWidget {
-  final PreviewProvider previewProvider;
-
-  const _MiniPreviewPanel({required this.previewProvider});
-
-  @override
-  Widget build(BuildContext context) {
-    final devices = previewProvider.devices;
-
-    if (devices.isEmpty) {
-      // No devices -- check if we have a legacy frame
-      if (previewProvider.currentFrame != null) {
-        return _buildLegacySinglePreview(context);
-      }
-      return _buildNoDevicesMessage();
-    }
-
-    if (devices.length == 1) {
-      // Single device -- show it filling the panel with fullscreen header
-      return _buildSingleDevicePreview(context, devices.first);
-    }
-
-    // Multiple devices -- panel header + vertical scrollable list
-    return Container(
-      color: VcrColors.bgPrimary,
-      child: Column(
-        children: [
-          // Panel header with fullscreen button
-          _MiniPreviewHeader(
-            deviceCount: devices.length,
-            onFullscreen: () {
-              Navigator.of(context).pushNamed('/preview');
-            },
-          ),
-          // Device list
-          Expanded(
-            child: ListView.separated(
-              padding: const EdgeInsets.all(Spacing.sm),
-              itemCount: devices.length,
-              separatorBuilder: (_, __) =>
-                  const SizedBox(height: Spacing.sm),
-              itemBuilder: (context, index) {
-                return _DevicePreviewCard(
-                  device: devices[index],
-                  frameBytes: previewProvider
-                      .getFrameForDevice(devices[index].id),
-                  isSelected: devices[index].id ==
-                      previewProvider.selectedDeviceId,
-                  onTap: () {
-                    previewProvider.selectDevice(devices[index].id);
-                    Navigator.of(context).pushNamed(
-                      '/preview',
-                      arguments: devices[index].id,
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// Legacy single preview (backward compat: no device info, just a frame).
-  Widget _buildLegacySinglePreview(BuildContext context) {
-    return GestureDetector(
-      onTap: () {
-        Navigator.of(context).pushNamed('/preview');
-      },
-      child: Container(
-        color: Colors.black,
-        child: PreviewViewer(
-          frameBytes: previewProvider.currentFrame,
-          mini: true,
-        ),
-      ),
-    );
-  }
-
-  /// Single device: fill the panel with the preview and a device label.
-  Widget _buildSingleDevicePreview(BuildContext context, DeviceInfo device) {
-    return Column(
-      children: [
-        // Panel header with fullscreen button
-        _MiniPreviewHeader(
-          deviceCount: 1,
-          onFullscreen: () {
-            previewProvider.selectDevice(device.id);
-            Navigator.of(context).pushNamed(
-              '/preview',
-              arguments: device.id,
-            );
-          },
-        ),
-        // Preview filling the rest of the panel
-        Expanded(
-          child: GestureDetector(
-            onTap: () {
-              previewProvider.selectDevice(device.id);
-              Navigator.of(context).pushNamed(
-                '/preview',
-                arguments: device.id,
-              );
-            },
-            child: Container(
-              color: Colors.black,
-              child: PreviewViewer(
-                frameBytes: previewProvider.getFrameForDevice(device.id),
-                mini: true,
-                deviceName: device.name,
-                platform: device.platform,
-                showDeviceLabel: true,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNoDevicesMessage() {
-    return Container(
-      color: VcrColors.bgPrimary,
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.devices,
-              size: 32,
-              color: VcrColors.textMuted,
-            ),
-            const SizedBox(height: Spacing.sm),
-            Text(
-              'No devices connected',
-              style: VcrTypography.labelMedium.copyWith(
-                color: VcrColors.textMuted,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Mini Preview Panel Header (with fullscreen button)
-// =============================================================================
-
-class _MiniPreviewHeader extends StatelessWidget {
-  final int deviceCount;
-  final VoidCallback onFullscreen;
-
-  const _MiniPreviewHeader({
-    required this.deviceCount,
-    required this.onFullscreen,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: Spacing.sm,
-        vertical: Spacing.xs,
-      ),
-      color: VcrColors.bgSecondary,
-      child: Row(
-        children: [
-          Icon(
-            Icons.devices,
-            size: 14,
-            color: VcrColors.textSecondary,
-          ),
-          const SizedBox(width: Spacing.xs),
-          Text(
-            '$deviceCount device${deviceCount != 1 ? 's' : ''}',
-            style: VcrTypography.labelMedium.copyWith(
-              color: VcrColors.textSecondary,
-            ),
-          ),
-          const Spacer(),
-          // Fullscreen viewer button
-          GestureDetector(
-            onTap: onFullscreen,
-            child: Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: Spacing.sm,
-                vertical: 2,
-              ),
-              decoration: BoxDecoration(
-                color: VcrColors.accent.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(Radii.sm),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.fullscreen,
-                    size: 14,
-                    color: VcrColors.accent,
-                  ),
-                  const SizedBox(width: 2),
-                  Text(
-                    'View',
-                    style: VcrTypography.labelMedium.copyWith(
-                      color: VcrColors.accent,
-                      fontSize: 10,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// Device Preview Card (for multi-device mini preview list)
-// =============================================================================
-
-class _DevicePreviewCard extends StatelessWidget {
-  final DeviceInfo device;
-  final Uint8List? frameBytes;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _DevicePreviewCard({
-    required this.device,
-    required this.frameBytes,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        decoration: BoxDecoration(
-          color: VcrColors.bgSecondary,
-          borderRadius: BorderRadius.circular(Radii.md),
-          border: isSelected
-              ? Border.all(color: VcrColors.accent, width: 1.5)
-              : Border.all(color: VcrColors.bgTertiary, width: 1),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Device label header
-            Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: Spacing.sm,
-                vertical: Spacing.xs,
-              ),
-              color: VcrColors.bgTertiary,
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.phone_android,
-                    size: 14,
-                    color: isSelected
-                        ? VcrColors.accent
-                        : VcrColors.textSecondary,
-                  ),
-                  const SizedBox(width: Spacing.xs),
-                  Expanded(
-                    child: Text(
-                      device.name,
-                      style: VcrTypography.labelMedium.copyWith(
-                        color: isSelected
-                            ? VcrColors.accent
-                            : VcrColors.textSecondary,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                  ),
-                  if (device.isCapturing)
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: const BoxDecoration(
-                        color: VcrColors.success,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            // Preview thumbnail with fullscreen hint
-            AspectRatio(
-              aspectRatio: 9 / 16,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: Container(
-                      color: Colors.black,
-                      child: frameBytes != null
-                          ? Image.memory(
-                              frameBytes!,
-                              fit: BoxFit.contain,
-                              gaplessPlayback: true,
-                            )
-                          : Center(
-                              child: Icon(
-                                Icons.hourglass_empty,
-                                size: 20,
-                                color: VcrColors.textMuted,
-                              ),
-                            ),
-                    ),
-                  ),
-                  // Fullscreen hint icon (bottom-right)
-                  if (frameBytes != null)
-                    Positioned(
-                      right: Spacing.xs,
-                      bottom: Spacing.xs,
-                      child: Container(
-                        padding: const EdgeInsets.all(2),
-                        decoration: BoxDecoration(
-                          color: Colors.black54,
-                          borderRadius: BorderRadius.circular(Radii.sm),
-                        ),
-                        child: const Icon(
-                          Icons.fullscreen,
-                          size: 14,
-                          color: VcrColors.textSecondary,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// =============================================================================
 // Shell Input Section (V2 — always shell mode, :vcr prefix for VCR commands)
 // =============================================================================
 
@@ -700,7 +583,7 @@ class _ShellInputSection extends StatelessWidget {
     return TerminalInput(
       enabled: isShellReady,
       commandHistory: terminalProvider.commandHistory,
-      hintText: isClaudeMode ? 'Message Claude...' : 'Shell command...',
+      hintText: isClaudeMode ? 'Message Claude...' : 'Enter command...',
       promptText: isClaudeMode ? '\u25C6 ' : '\$ ',
       mode: isClaudeMode ? TerminalInputMode.claude : TerminalInputMode.shell,
       onEsc: isShellReady
@@ -710,17 +593,11 @@ class _ShellInputSection extends StatelessWidget {
         if (command.startsWith(':vcr ')) {
           // VCR command mode (secondary)
           wsService.sendCommand(command.substring(5));
-        } else if (command.startsWith('!')) {
-          // Shell escape: !ls, !git status, etc.
-          wsService.sendShellInput('${command.substring(1)}\r');
-        } else if (isClaudeMode) {
-          // Claude is already running — send directly to its stdin.
-          wsService.sendShellInput('$command\r');
         } else {
-          // Claude not running — launch it with the message as prompt.
-          // Escape single quotes for safe shell embedding.
-          final escaped = command.replaceAll("'", "'\\''");
-          wsService.sendShellInput("claude '$escaped'\r");
+          // Send input directly to the shell (or to Claude if it's the
+          // foreground process). Works like a normal terminal — user can
+          // type 'claude' to start Claude Code, 'ls' to list files, etc.
+          wsService.sendShellInput('$command\r');
         }
       },
     );

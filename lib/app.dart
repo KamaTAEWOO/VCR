@@ -7,14 +7,13 @@ import 'providers/connection_provider.dart';
 import 'providers/preview_provider.dart';
 import 'providers/terminal_provider.dart';
 import 'screens/connection_screen.dart';
-import 'screens/preview_screen.dart';
 import 'screens/terminal_screen.dart';
 import 'services/websocket_service.dart';
 
 /// Root widget that wires up providers, services, routing, and theme.
 ///
 /// - MultiProvider registers 3 ChangeNotifiers + WebSocketService.
-/// - Routes: / -> Connection, /terminal -> Terminal, /preview -> Preview.
+/// - Routes: / -> Connection, /terminal -> Terminal.
 /// - Listens for disconnection to navigate back to Connection screen.
 class VcrApp extends StatefulWidget {
   const VcrApp({super.key});
@@ -104,7 +103,6 @@ class _VcrAppState extends State<VcrApp> {
         routes: {
           '/': (context) => const ConnectionScreen(),
           '/terminal': (context) => const TerminalScreen(),
-          '/preview': (context) => const PreviewScreen(),
         },
       ),
     );
