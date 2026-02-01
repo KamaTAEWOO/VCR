@@ -1,0 +1,19 @@
+name: vcr_agent
+description: VCR Agent - Dart CLI that runs on notebook, manages Flutter projects and streams emulator screen
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  shelf: ^1.4.0
+  shelf_web_socket: ^3.0.0
+  web_socket_channel: ^3.0.0
+  args: ^2.5.0
+  image: ^4.2.0
+  vcr_shared:
+    path: ../shared
+
+dev_dependencies:
+  test: ^1.25.0

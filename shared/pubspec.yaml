@@ -1,0 +1,12 @@
+name: vcr_shared
+description: Shared models and protocol constants for VCR (Vibe Code Runner)
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.9.2
+
+dependencies: {}
+
+dev_dependencies:
+  test: ^1.25.0
