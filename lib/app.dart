@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'core/constants.dart';
 import 'core/theme.dart';
+import 'models/saved_server.dart';
 import 'providers/connection_provider.dart';
 import 'providers/preview_provider.dart';
 import 'providers/terminal_provider.dart';
 import 'screens/connection_screen.dart';
 import 'screens/terminal_screen.dart';
+import 'services/server_storage_service.dart';
 import 'services/websocket_service.dart';
 
 /// Root widget that wires up providers, services, routing, and theme.
@@ -16,7 +17,14 @@ import 'services/websocket_service.dart';
 /// - Routes: / -> Connection, /terminal -> Terminal.
 /// - Listens for disconnection to navigate back to Connection screen.
 class VcrApp extends StatefulWidget {
-  const VcrApp({super.key});
+  final ServerStorageService storageService;
+  final List<SavedServer> initialSavedServers;
+
+  const VcrApp({
+    super.key,
+    required this.storageService,
+    required this.initialSavedServers,
+  });
 
   @override
   State<VcrApp> createState() => _VcrAppState();
@@ -40,6 +48,9 @@ class _VcrAppState extends State<VcrApp> {
     _connectionProvider = ConnectionProvider();
     _terminalProvider = TerminalProvider();
     _previewProvider = PreviewProvider();
+
+    // Load initial saved servers
+    _connectionProvider.setSavedServers(widget.initialSavedServers);
 
     _webSocketService = WebSocketService(
       connectionProvider: _connectionProvider,
@@ -92,6 +103,9 @@ class _VcrAppState extends State<VcrApp> {
         ),
         Provider<WebSocketService>.value(
           value: _webSocketService,
+        ),
+        Provider<ServerStorageService>.value(
+          value: widget.storageService,
         ),
       ],
       child: MaterialApp(

@@ -11,6 +11,7 @@ library vcr_agent;
 
 export 'server/websocket_server.dart';
 export 'server/mdns_service.dart';
+export 'network/ddns_service.dart';
 export 'parser/command_parser.dart';
 export 'parser/command_types.dart';
 export 'flutter/flutter_controller.dart';

@@ -1,5 +1,7 @@
 import 'package:flutter/foundation.dart';
 
+import '../models/saved_server.dart';
+
 /// WebSocket connection states.
 enum VcrConnectionState {
   disconnected,
@@ -21,7 +23,7 @@ class DiscoveredServer {
 }
 
 /// Manages WebSocket connection state, server discovery results,
-/// and reconnection logic.
+/// saved servers, and reconnection logic.
 class ConnectionProvider extends ChangeNotifier {
   VcrConnectionState _state = VcrConnectionState.disconnected;
   String? _host;
@@ -32,6 +34,8 @@ class ConnectionProvider extends ChangeNotifier {
 
   List<DiscoveredServer> _discoveredServers = [];
   bool _isSearching = false;
+
+  List<SavedServer> _savedServers = [];
 
   int _reconnectAttempts = 0;
 
@@ -47,6 +51,10 @@ class ConnectionProvider extends ChangeNotifier {
   List<DiscoveredServer> get discoveredServers =>
       List.unmodifiable(_discoveredServers);
   bool get isSearching => _isSearching;
+
+  List<SavedServer> get savedServers => List.unmodifiable(_savedServers);
+  List<SavedServer> get favoriteServers =>
+      List.unmodifiable(_savedServers.where((s) => s.isFavorite).toList());
 
   int get reconnectAttempts => _reconnectAttempts;
   bool get isConnected => _state == VcrConnectionState.connected;
@@ -116,6 +124,46 @@ class ConnectionProvider extends ChangeNotifier {
 
   void clearDiscoveredServers() {
     _discoveredServers = [];
+    notifyListeners();
+  }
+
+  // -- Saved Servers --
+
+  void setSavedServers(List<SavedServer> servers) {
+    _savedServers = servers;
+    notifyListeners();
+  }
+
+  void addSavedServer(SavedServer server) {
+    // Check if server already exists by host:port
+    final existingIndex = _savedServers.indexWhere(
+      (s) => s.host == server.host && s.port == server.port,
+    );
+    if (existingIndex >= 0) {
+      // Update existing server
+      _savedServers = List<SavedServer>.from(_savedServers);
+      _savedServers[existingIndex] = server.copyWith(
+        id: _savedServers[existingIndex].id,
+        isFavorite: _savedServers[existingIndex].isFavorite,
+      );
+    } else {
+      _savedServers = [server, ..._savedServers];
+    }
+    notifyListeners();
+  }
+
+  void removeSavedServer(String serverId) {
+    _savedServers = _savedServers.where((s) => s.id != serverId).toList();
+    notifyListeners();
+  }
+
+  void toggleFavorite(String serverId) {
+    _savedServers = _savedServers.map((s) {
+      if (s.id == serverId) {
+        return s.copyWith(isFavorite: !s.isFavorite);
+      }
+      return s;
+    }).toList();
     notifyListeners();
   }
 }

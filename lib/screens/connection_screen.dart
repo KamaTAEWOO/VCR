@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 
 import '../core/constants.dart';
 import '../core/theme.dart';
+import '../models/saved_server.dart';
 import '../providers/connection_provider.dart';
 import '../services/discovery_service.dart';
+import '../services/server_storage_service.dart';
 import '../services/websocket_service.dart';
 import '../widgets/server_list_tile.dart';
 
@@ -49,7 +51,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
     _discoveryService!.startDiscovery();
   }
 
-  Future<void> _connectToServer(String host, int port) async {
+  Future<void> _connectToServer(String host, int port, {String? serverName}) async {
     if (_isConnecting) return;
 
     setState(() => _isConnecting = true);
@@ -60,6 +62,11 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
 
       // Discovery no longer needed.
       _discoveryService?.stopDiscovery();
+
+      // Save the server to history on successful connection
+      if (mounted) {
+        await _saveServerToHistory(host, port, serverName);
+      }
 
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/terminal');
@@ -79,6 +86,47 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
         setState(() => _isConnecting = false);
       }
     }
+  }
+
+  Future<void> _saveServerToHistory(String host, int port, String? serverName) async {
+    final storageService = context.read<ServerStorageService>();
+    final connProvider = context.read<ConnectionProvider>();
+
+    final server = SavedServer(
+      id: '${host}_${port}_${DateTime.now().millisecondsSinceEpoch}',
+      name: serverName ?? '$host:$port',
+      host: host,
+      port: port,
+      lastConnected: DateTime.now(),
+    );
+
+    final updatedServers = await storageService.addOrUpdateServer(
+      connProvider.savedServers,
+      server,
+    );
+    connProvider.setSavedServers(updatedServers);
+  }
+
+  Future<void> _toggleServerFavorite(String serverId) async {
+    final storageService = context.read<ServerStorageService>();
+    final connProvider = context.read<ConnectionProvider>();
+
+    final updatedServers = await storageService.toggleFavorite(
+      connProvider.savedServers,
+      serverId,
+    );
+    connProvider.setSavedServers(updatedServers);
+  }
+
+  Future<void> _deleteServer(String serverId) async {
+    final storageService = context.read<ServerStorageService>();
+    final connProvider = context.read<ConnectionProvider>();
+
+    final updatedServers = await storageService.removeServer(
+      connProvider.savedServers,
+      serverId,
+    );
+    connProvider.setSavedServers(updatedServers);
   }
 
   void _connectManually() {
@@ -110,6 +158,8 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                 const SizedBox(height: Spacing.xxl),
                 const _VcrLogo(),
                 const SizedBox(height: Spacing.xl),
+                _buildSavedServersSection(),
+                const SizedBox(height: Spacing.lg),
                 _buildServerDiscoverySection(),
                 const SizedBox(height: Spacing.lg),
                 _buildManualConnectDivider(),
@@ -123,6 +173,41 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  // -- Saved Servers Section --
+
+  Widget _buildSavedServersSection() {
+    return Consumer<ConnectionProvider>(
+      builder: (context, connProvider, _) {
+        final servers = connProvider.savedServers;
+
+        if (servers.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Saved Servers', style: VcrTypography.titleLarge),
+            const SizedBox(height: Spacing.sm),
+            ...servers.map((server) => Padding(
+                  padding: const EdgeInsets.only(bottom: Spacing.sm),
+                  child: _SavedServerTile(
+                    server: server,
+                    onTap: () => _connectToServer(
+                      server.host,
+                      server.port,
+                      serverName: server.name,
+                    ),
+                    onFavoriteToggle: () => _toggleServerFavorite(server.id),
+                    onDelete: () => _deleteServer(server.id),
+                  ),
+                )),
+          ],
+        );
+      },
     );
   }
 
@@ -146,8 +231,11 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
                       name: server.name,
                       host: server.host,
                       port: server.port,
-                      onTap: () =>
-                          _connectToServer(server.host, server.port),
+                      onTap: () => _connectToServer(
+                        server.host,
+                        server.port,
+                        serverName: server.name,
+                      ),
                     ),
                   )),
             if (isSearching)
@@ -219,7 +307,7 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
           style: VcrTypography.bodyLarge,
           decoration: const InputDecoration(
             labelText: 'IP Address',
-            hintText: '192.168.0.100',
+            hintText: '192.168.0.100 or mydomain.duckdns.org',
           ),
           keyboardType: TextInputType.url,
         ),
@@ -252,6 +340,100 @@ class _ConnectionScreenState extends State<ConnectionScreen> {
               ),
             )
           : const Text('CONNECT'),
+    );
+  }
+}
+
+// =============================================================================
+// Saved Server Tile (internal widget)
+// =============================================================================
+
+class _SavedServerTile extends StatelessWidget {
+  final SavedServer server;
+  final VoidCallback onTap;
+  final VoidCallback onFavoriteToggle;
+  final VoidCallback onDelete;
+
+  const _SavedServerTile({
+    required this.server,
+    required this.onTap,
+    required this.onFavoriteToggle,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: VcrColors.bgSecondary,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.md,
+            vertical: Spacing.sm,
+          ),
+          child: Row(
+            children: [
+              // Favorite star button
+              IconButton(
+                icon: Icon(
+                  server.isFavorite ? Icons.star : Icons.star_border,
+                  color: server.isFavorite
+                      ? VcrColors.warning
+                      : VcrColors.textMuted,
+                  size: 20,
+                ),
+                onPressed: onFavoriteToggle,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 32,
+                  minHeight: 32,
+                ),
+              ),
+              const SizedBox(width: Spacing.sm),
+              // Server info
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      server.name,
+                      style: VcrTypography.bodyLarge.copyWith(
+                        fontWeight: FontWeight.w500,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${server.host}:${server.port}',
+                      style: VcrTypography.bodyMedium.copyWith(
+                        color: VcrColors.textSecondary,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              // Delete button
+              IconButton(
+                icon: const Icon(
+                  Icons.close,
+                  color: VcrColors.textMuted,
+                  size: 18,
+                ),
+                onPressed: onDelete,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(
+                  minWidth: 32,
+                  minHeight: 32,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

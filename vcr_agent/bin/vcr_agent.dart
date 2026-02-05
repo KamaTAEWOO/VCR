@@ -6,6 +6,7 @@ import 'package:vcr_shared/vcr_shared.dart';
 
 import 'package:vcr_agent/server/websocket_server.dart';
 import 'package:vcr_agent/server/mdns_service.dart';
+import 'package:vcr_agent/network/ddns_service.dart';
 import 'package:vcr_agent/parser/command_parser.dart';
 import 'package:vcr_agent/parser/command_types.dart';
 import 'package:vcr_agent/flutter/flutter_controller.dart';
@@ -43,6 +44,14 @@ void main(List<String> args) async {
       negatable: false,
       help: 'Suppress log output (only show errors)',
     )
+    ..addOption(
+      'ddns-domain',
+      help: 'DDNS domain (e.g., myvcr.duckdns.org)',
+    )
+    ..addOption(
+      'ddns-token',
+      help: 'Duck DNS API token',
+    )
     ..addFlag(
       'help',
       abbr: 'h',
@@ -71,6 +80,8 @@ void main(List<String> args) async {
   final port = int.tryParse(results.option('port')!) ?? ConnectionDefaults.port;
   final projectDir = results.option('project-dir')!;
   _quiet = results.flag('quiet');
+  final ddnsDomain = results.option('ddns-domain');
+  final ddnsToken = results.option('ddns-token');
 
   _printBanner();
   _log('Starting VCR Agent v${ConnectionDefaults.agentVersion}');
@@ -86,6 +97,12 @@ void main(List<String> args) async {
   final deviceController = DeviceController();
   final webSocketServer = WebSocketServer(port: port, quiet: _quiet);
   final mdnsService = MdnsService(port: port, quiet: _quiet);
+  final ddnsService = DdnsService(
+    domain: ddnsDomain,
+    token: ddnsToken,
+    port: port,
+    quiet: _quiet,
+  );
   final shellManager = ShellManager();
 
   // Current agent state
@@ -351,6 +368,19 @@ void main(List<String> args) async {
     _log('mDNS registration skipped (clients can connect via IP:$port)');
   }
 
+  // --- 6. External IP and DDNS ---
+  final externalIp = await ddnsService.getExternalIp();
+  if (externalIp != null) {
+    _log('External IP: $externalIp');
+    _log('External WebSocket: ws://$externalIp:$port');
+  } else {
+    _log('External IP: unavailable');
+  }
+
+  if (ddnsService.isConfigured) {
+    await ddnsService.startPeriodicUpdate();
+  }
+
   // --- Check Flutter availability ---
   final flutterAvailable = await flutterController.isFlutterAvailable();
   if (!flutterAvailable) {
@@ -394,6 +424,7 @@ void main(List<String> args) async {
     }
     activeCaptures.clear();
     shellManager.dispose();
+    ddnsService.dispose();
     await flutterController.dispose();
     await mdnsService.dispose();
     await webSocketServer.stop();
