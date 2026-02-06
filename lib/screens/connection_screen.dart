@@ -22,7 +22,7 @@ class ConnectionScreen extends StatefulWidget {
 
 class _ConnectionScreenState extends State<ConnectionScreen> {
   final TextEditingController _ipController =
-      TextEditingController(text: 'kamataewoo.duckdns.org');
+      TextEditingController(text: '');
   final TextEditingController _portController =
       TextEditingController(text: '9000');
   DiscoveryService? _discoveryService;
