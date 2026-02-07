@@ -7,13 +7,24 @@ import 'package:xterm/xterm.dart';
 
 import '../core/constants.dart';
 import '../core/theme.dart';
+import '../models/agent_state.dart';
 import '../models/device_info.dart';
 import '../providers/connection_provider.dart';
 import '../providers/preview_provider.dart';
 import '../providers/terminal_provider.dart';
 import '../services/websocket_service.dart';
+import '../widgets/autocomplete_bar.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/terminal_input.dart';
+
+/// Compare two device lists by ID to avoid unnecessary rebuilds.
+bool _deviceListEquals(List<DeviceInfo> a, List<DeviceInfo> b) {
+  if (a.length != b.length) return false;
+  for (int i = 0; i < a.length; i++) {
+    if (a[i].id != b[i].id) return false;
+  }
+  return true;
+}
 
 /// Main terminal screen with PageView-based navigation.
 ///
@@ -50,9 +61,12 @@ class _TerminalScreenState extends State<TerminalScreen> {
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: Consumer<PreviewProvider>(
-          builder: (context, previewProvider, _) {
-            final devices = previewProvider.devices;
+        child: Selector<PreviewProvider, List<DeviceInfo>>(
+          selector: (_, p) => p.devices,
+          shouldRebuild: (prev, next) =>
+              prev.length != next.length ||
+              !_deviceListEquals(prev, next),
+          builder: (context, devices, _) {
             final pageCount = 1 + devices.length;
 
             // If devices were removed and current page is out of bounds, reset.
@@ -94,11 +108,7 @@ class _TerminalScreenState extends State<TerminalScreen> {
                         return const _ShellMainArea();
                       }
                       final device = devices[index - 1];
-                      return _DevicePreviewPage(
-                        device: device,
-                        frameBytes:
-                            previewProvider.getFrameForDevice(device.id),
-                      );
+                      return _DevicePreviewPage(device: device);
                     },
                   ),
                 ),
@@ -144,9 +154,16 @@ class _StatusBar extends StatelessWidget {
           Row(
             children: [
               // Connection status indicator
-              Consumer<PreviewProvider>(
-                builder: (context, previewProvider, _) {
-                  return StatusIndicator(state: previewProvider.agentState);
+              Consumer2<PreviewProvider, TerminalProvider>(
+                builder: (context, previewProvider, terminalProvider, _) {
+                  var state = previewProvider.agentState;
+                  // When agent is idle, reflect Shell/Claude mode instead
+                  if (state == AgentState.idle) {
+                    state = terminalProvider.isClaudeMode
+                        ? AgentState.claudeActive
+                        : AgentState.shellActive;
+                  }
+                  return StatusIndicator(state: state);
                 },
               ),
               const SizedBox(width: Spacing.md),
@@ -164,76 +181,14 @@ class _StatusBar extends StatelessWidget {
                   },
                 ),
               ),
-              // Claude/Shell mode toggle badge
-              Consumer<TerminalProvider>(
-                builder: (context, terminalProvider, _) {
-                  final isClaude = terminalProvider.isClaudeMode;
-                  final isOverride = terminalProvider.isManualOverride;
-                  // Hide badge when in auto shell mode (no override, no claude)
-                  if (!isClaude && !isOverride) {
-                    return const SizedBox.shrink();
-                  }
-                  final badgeColor =
-                      isClaude ? VcrColors.warning : VcrColors.accent;
-                  return GestureDetector(
-                    onTap: () => terminalProvider.toggleModeOverride(),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: Spacing.sm),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: Spacing.sm,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: badgeColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(Radii.sm),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            isClaude ? 'Claude' : 'Shell',
-                            style: VcrTypography.labelMedium.copyWith(
-                              color: badgeColor,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          if (isOverride) ...[
-                            const SizedBox(width: 4),
-                            Container(
-                              width: 6,
-                              height: 6,
-                              decoration: const BoxDecoration(
-                                color: VcrColors.textMuted,
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
-              // Claude Code launch button
-              Consumer<ConnectionProvider>(
-                builder: (context, connProvider, _) {
+              // Claude/Shell toggle button
+              Consumer2<ConnectionProvider, TerminalProvider>(
+                builder: (context, connProvider, terminalProvider, _) {
                   if (!connProvider.isConnected) {
                     return const SizedBox.shrink();
                   }
-                  return IconButton(
-                    icon: Icon(
-                      Icons.auto_awesome,
-                      color: VcrColors.warning,
-                    ),
-                    onPressed: () {
-                      final wsService = context.read<WebSocketService>();
-                      wsService.sendShellInput(
-                        'claude --dangerously-skip-permissions\r',
-                      );
-                    },
-                    splashRadius: 20,
-                    tooltip: 'Launch Claude',
+                  return _ModeToggleButton(
+                    isClaude: terminalProvider.isClaudeMode,
                   );
                 },
               ),
@@ -249,6 +204,7 @@ class _StatusBar extends StatelessWidget {
                       color: VcrColors.error,
                     ),
                     onPressed: () {
+                      _ShellTerminalViewState.resetResizeTracking();
                       final wsService = context.read<WebSocketService>();
                       wsService.reconnect();
                     },
@@ -321,34 +277,37 @@ class _PageIndicatorDots extends StatelessWidget {
 
 class _DevicePreviewPage extends StatelessWidget {
   final DeviceInfo device;
-  final Uint8List? frameBytes;
 
   const _DevicePreviewPage({
     required this.device,
-    required this.frameBytes,
   });
 
   @override
   Widget build(BuildContext context) {
     return Stack(
       children: [
-        // Fullscreen device frame
+        // Fullscreen device frame - only rebuilds when this device's frame changes
         Positioned.fill(
-          child: Container(
-            color: Colors.black,
-            child: Center(
-              child: InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 5.0,
-                child: frameBytes != null
-                    ? Image.memory(
-                        frameBytes!,
-                        fit: BoxFit.contain,
-                        gaplessPlayback: true,
-                      )
-                    : _buildPlaceholder(),
-              ),
-            ),
+          child: Selector<PreviewProvider, Uint8List?>(
+            selector: (_, p) => p.getFrameForDevice(device.id),
+            builder: (context, frameBytes, _) {
+              return Container(
+                color: Colors.black,
+                child: Center(
+                  child: InteractiveViewer(
+                    minScale: 0.5,
+                    maxScale: 5.0,
+                    child: frameBytes != null
+                        ? Image.memory(
+                            frameBytes,
+                            fit: BoxFit.contain,
+                            gaplessPlayback: true,
+                          )
+                        : _buildPlaceholder(),
+                  ),
+                ),
+              );
+            },
           ),
         ),
         // Device name + LIVE overlay (top)
@@ -479,6 +438,30 @@ class _ShellMainArea extends StatelessWidget {
                   terminalProvider.setShellActive(true);
                 },
               ),
+            // Mode switching loading overlay
+            if (terminalProvider.isSwitchingMode)
+              Container(
+                color: VcrColors.bgPrimary.withValues(alpha: 0.85),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(
+                        color: VcrColors.accent,
+                      ),
+                      const SizedBox(height: Spacing.md),
+                      Text(
+                        terminalProvider.isClaudeMode
+                            ? 'Claude 종료 중...'
+                            : 'Claude 시작 중...',
+                        style: VcrTypography.bodyMedium.copyWith(
+                          color: VcrColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -502,10 +485,16 @@ class _ShellTerminalView extends StatefulWidget {
 class _ShellTerminalViewState extends State<_ShellTerminalView> {
   Timer? _resizeDebounce;
 
-  /// Track the last sent dimensions to avoid duplicate resize commands
-  /// (e.g. when PageView rebuilds the terminal page during swipes).
-  int _lastSentColumns = 0;
-  int _lastSentRows = 0;
+  /// Track the last sent dimensions to avoid duplicate resize commands.
+  /// Static so the values persist across PageView rebuilds (widget dispose/recreate).
+  static int _lastSentColumns = 0;
+  static int _lastSentRows = 0;
+
+  /// Reset tracking on reconnect so the first resize triggers a clear.
+  static void resetResizeTracking() {
+    _lastSentColumns = 0;
+    _lastSentRows = 0;
+  }
 
   @override
   void dispose() {
@@ -535,14 +524,26 @@ class _ShellTerminalViewState extends State<_ShellTerminalView> {
     }
     final wsService = context.read<WebSocketService>();
     terminal.onResize = (width, height, pixelWidth, pixelHeight) {
-      // Skip if dimensions haven't actually changed.
+      // Skip if dimensions haven't actually changed (also prevents
+      // duplicate resize on PageView swipe back since static vars persist).
       if (width == _lastSentColumns && height == _lastSentRows) return;
-      // Debounce resize to avoid spamming during keyboard animation.
+      // Debounce: use a longer delay (800ms) to absorb the initial
+      // rapid resize events during shell startup and page transitions.
       _resizeDebounce?.cancel();
-      _resizeDebounce = Timer(const Duration(milliseconds: 300), () {
+      _resizeDebounce = Timer(const Duration(milliseconds: 800), () {
+        // Re-check after debounce in case another resize superseded this one.
+        if (width == _lastSentColumns && height == _lastSentRows) return;
+        final isFirstResize = _lastSentColumns == 0 && _lastSentRows == 0;
         _lastSentColumns = width;
         _lastSentRows = height;
         wsService.sendShellResize(width, height);
+        // On first resize after connect, send clear to remove the duplicate
+        // prompt caused by the shell redrawing after resize.
+        if (isFirstResize) {
+          Future.delayed(const Duration(milliseconds: 200), () {
+            wsService.sendShellInput('clear\r');
+          });
+        }
       });
     };
     return TerminalView(
@@ -613,8 +614,164 @@ class _ShellExitOverlay extends StatelessWidget {
 // Shell Input Section (V2 — always shell mode, :vcr prefix for VCR commands)
 // =============================================================================
 
-class _ShellInputSection extends StatelessWidget {
+class _ShellInputSection extends StatefulWidget {
   const _ShellInputSection();
+
+  @override
+  State<_ShellInputSection> createState() => _ShellInputSectionState();
+}
+
+class _ShellInputSectionState extends State<_ShellInputSection> {
+  final TextEditingController _textController = TextEditingController();
+  List<CompletionItem> _suggestions = [];
+  bool _isTabLoading = false;
+  Timer? _completionTimeout;
+
+  @override
+  void initState() {
+    super.initState();
+    final terminalProvider = context.read<TerminalProvider>();
+    terminalProvider.onCompletionResult = _onCompletionResult;
+  }
+
+  @override
+  void dispose() {
+    _completionTimeout?.cancel();
+    _textController.dispose();
+    final terminalProvider = context.read<TerminalProvider>();
+    terminalProvider.onCompletionResult = null;
+    super.dispose();
+  }
+
+  void _onCompletionResult(List<CompletionItem> results) {
+    _completionTimeout?.cancel();
+    if (!mounted) return;
+
+    setState(() {
+      _isTabLoading = false;
+    });
+
+    if (results.isEmpty) return;
+
+    // Client-side filtering by current input prefix.
+    final currentText = _textController.text;
+    final lastSpaceIdx = currentText.lastIndexOf(' ');
+    final prefix =
+        lastSpaceIdx == -1 ? currentText : currentText.substring(lastSpaceIdx + 1);
+
+    var filtered = results.where((item) {
+      return item.name.toLowerCase().startsWith(prefix.toLowerCase());
+    }).toList();
+
+    // If command is "cd", only show directories.
+    if (currentText.trimLeft().startsWith('cd ')) {
+      filtered = filtered.where((item) => item.isDirectory).toList();
+    }
+
+    if (filtered.isEmpty) return;
+
+    if (filtered.length == 1) {
+      _applySuggestion(filtered.first);
+    } else {
+      _applyCommonPrefix(filtered);
+      setState(() {
+        _suggestions = filtered;
+      });
+    }
+  }
+
+  void _applySuggestion(CompletionItem item) {
+    final currentText = _textController.text;
+    final suffix = item.isDirectory ? '/' : ' ';
+    final completedName = item.name + suffix;
+
+    // Find the last token and replace it with the completed name.
+    final lastSpaceIdx = currentText.lastIndexOf(' ');
+    final prefix = lastSpaceIdx == -1 ? '' : currentText.substring(0, lastSpaceIdx + 1);
+    final newText = '$prefix$completedName';
+
+    _textController.text = newText;
+    _textController.selection = TextSelection.fromPosition(
+      TextPosition(offset: newText.length),
+    );
+
+    setState(() {
+      _suggestions = [];
+    });
+  }
+
+  void _applyCommonPrefix(List<CompletionItem> results) {
+    if (results.isEmpty) return;
+
+    // Find common prefix among all results.
+    String common = results.first.name;
+    for (final item in results.skip(1)) {
+      int i = 0;
+      while (i < common.length && i < item.name.length && common[i] == item.name[i]) {
+        i++;
+      }
+      common = common.substring(0, i);
+    }
+
+    final currentText = _textController.text;
+    final lastSpaceIdx = currentText.lastIndexOf(' ');
+    final currentToken = lastSpaceIdx == -1 ? currentText : currentText.substring(lastSpaceIdx + 1);
+
+    // Only extend if common prefix is longer than current token.
+    if (common.length > currentToken.length) {
+      final prefix = lastSpaceIdx == -1 ? '' : currentText.substring(0, lastSpaceIdx + 1);
+      final newText = '$prefix$common';
+      _textController.text = newText;
+      _textController.selection = TextSelection.fromPosition(
+        TextPosition(offset: newText.length),
+      );
+    }
+  }
+
+  void _handleTab(String currentText) {
+    final terminalProvider = context.read<TerminalProvider>();
+    final wsService = context.read<WebSocketService>();
+
+    // In Claude mode, send raw tab.
+    if (terminalProvider.isClaudeMode) {
+      wsService.sendShellInput('\t');
+      return;
+    }
+
+    setState(() {
+      _suggestions = [];
+      _isTabLoading = true;
+    });
+
+    terminalProvider.startCompletion();
+
+    // Send ls with STX/ETX markers. Uses ; (not &&) so end marker always
+    // executes even if ls fails. Filtering is done client-side.
+    // Leading space prevents most shells from saving to history.
+    const cmd = " printf '\\x02VCR_CS\\x03\\n';"
+        " ls -1ap 2>/dev/null;"
+        " printf '\\x02VCR_CE\\x03\\n'\r";
+    wsService.sendShellInput(cmd);
+
+    _completionTimeout?.cancel();
+    _completionTimeout = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        terminalProvider.cancelCompletion();
+        setState(() {
+          _isTabLoading = false;
+        });
+      }
+    });
+  }
+
+  void _handleTextChanged(String text) {
+    // Dismiss suggestions when the user types.
+    if (_suggestions.isNotEmpty) {
+      setState(() {
+        _suggestions = [];
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -626,29 +783,134 @@ class _ShellInputSection extends StatelessWidget {
     final isShellReady = isConnected && terminalProvider.shellActive;
     final isClaudeMode = terminalProvider.isClaudeMode;
 
-    return TerminalInput(
-      enabled: isShellReady,
-      commandHistory: terminalProvider.commandHistory,
-      hintText: isClaudeMode ? 'Message Claude...' : 'Enter command...',
-      promptText: isClaudeMode ? '\u25C6 ' : '\$ ',
-      mode: isClaudeMode ? TerminalInputMode.claude : TerminalInputMode.shell,
-      onTab: isShellReady
-          ? () => wsService.sendShellInput('\t')
-          : null,
-      onEsc: isShellReady
-          ? () => wsService.sendShellInput('\x1b')
-          : null,
-      onSubmit: (command) {
-        if (command.startsWith(':vcr ')) {
-          // VCR command mode (secondary)
-          wsService.sendCommand(command.substring(5));
-        } else {
-          // Send input directly to the shell (or to Claude if it's the
-          // foreground process). Works like a normal terminal — user can
-          // type 'claude' to start Claude Code, 'ls' to list files, etc.
-          wsService.sendShellInput('$command\r');
-        }
-      },
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Autocomplete suggestion bar (animated).
+        AnimatedSize(
+          duration: VcrDurations.slideUp,
+          curve: Curves.easeOut,
+          child: _suggestions.isNotEmpty
+              ? AutocompleteSuggestionBar(
+                  suggestions: _suggestions,
+                  onSelect: (item) {
+                    _applySuggestion(item);
+                  },
+                )
+              : const SizedBox.shrink(),
+        ),
+        TerminalInput(
+          controller: _textController,
+          enabled: isShellReady,
+          isTabLoading: _isTabLoading,
+          commandHistory: terminalProvider.commandHistory,
+          hintText: isClaudeMode ? 'Message Claude...' : 'Enter command...',
+          promptText: isClaudeMode ? '\u25C6 ' : '\$ ',
+          mode: isClaudeMode
+              ? TerminalInputMode.claude
+              : TerminalInputMode.shell,
+          onTextChanged: _handleTextChanged,
+          onTab: isShellReady ? _handleTab : null,
+          onSubmit: (command) {
+            // Dismiss suggestions on submit.
+            if (_suggestions.isNotEmpty) {
+              setState(() {
+                _suggestions = [];
+              });
+            }
+            terminalProvider.addToHistory(command);
+            if (command.startsWith(':vcr ')) {
+              wsService.sendCommand(command.substring(5));
+            } else {
+              wsService.sendShellInput('$command\r');
+            }
+          },
+        ),
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// Claude/Shell Mode Toggle Button (with cooldown to prevent rapid presses)
+// =============================================================================
+
+class _ModeToggleButton extends StatefulWidget {
+  final bool isClaude;
+
+  const _ModeToggleButton({required this.isClaude});
+
+  @override
+  State<_ModeToggleButton> createState() => _ModeToggleButtonState();
+}
+
+class _ModeToggleButtonState extends State<_ModeToggleButton> {
+  bool _cooldown = false;
+
+  void _clearTerminal(TerminalProvider terminalProvider) {
+    final terminal = terminalProvider.shellTerminal;
+    if (terminal != null) {
+      terminal.eraseDisplay();
+      terminal.eraseScrollbackOnly();
+      terminal.setCursor(0, 0);
+    }
+  }
+
+  void _handleToggle() {
+    if (_cooldown) return;
+
+    setState(() => _cooldown = true);
+
+    final wsService = context.read<WebSocketService>();
+    final terminalProvider = context.read<TerminalProvider>();
+    terminalProvider.setSwitchingMode(true);
+    if (widget.isClaude) {
+      wsService.sendShellInput('/exit\r');
+      // Wait for /exit to complete, then clear and send clear command
+      Future.delayed(const Duration(seconds: 1), () {
+        _clearTerminal(terminalProvider);
+        wsService.sendShellInput('clear\r');
+      });
+    } else {
+      // Clear before launching Claude for a fresh start
+      _clearTerminal(terminalProvider);
+      wsService.sendShellInput('clear\r');
+      Future.delayed(const Duration(milliseconds: 500), () {
+        wsService.sendShellInput(
+          'claude --dangerously-skip-permissions\r',
+        );
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Claude가 실행되었습니다! 명령을 입력하고 전송 버튼을 눌러주세요.',
+          ),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() => _cooldown = false);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(
+        widget.isClaude ? Icons.terminal : Icons.auto_awesome,
+        color: _cooldown
+            ? VcrColors.textMuted
+            : widget.isClaude
+                ? VcrColors.accent
+                : VcrColors.warning,
+      ),
+      onPressed: _cooldown ? null : _handleToggle,
+      splashRadius: 20,
+      tooltip: widget.isClaude ? 'Exit Claude' : 'Launch Claude',
     );
   }
 }

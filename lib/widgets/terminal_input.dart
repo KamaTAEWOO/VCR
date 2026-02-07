@@ -18,24 +18,32 @@ enum TerminalInputMode {
 /// Matches UI_SPEC.md section 4.2.
 class TerminalInput extends StatefulWidget {
   final void Function(String command) onSubmit;
-  final VoidCallback? onEsc;
-  final VoidCallback? onTab;
+  final void Function(String currentText)? onTab;
   final bool enabled;
+  final bool isTabLoading;
   final List<String> commandHistory;
   final String? hintText;
   final String promptText;
   final TerminalInputMode mode;
+  final ValueChanged<String>? onTextChanged;
+
+  /// Optional external controller. If provided, the widget uses this
+  /// controller instead of creating its own. The caller is responsible
+  /// for disposal.
+  final TextEditingController? controller;
 
   const TerminalInput({
     super.key,
     required this.onSubmit,
-    this.onEsc,
     this.onTab,
     this.enabled = true,
+    this.isTabLoading = false,
     this.commandHistory = const [],
     this.hintText,
     this.promptText = '> ',
     this.mode = TerminalInputMode.shell,
+    this.onTextChanged,
+    this.controller,
   });
 
   @override
@@ -43,15 +51,41 @@ class TerminalInput extends StatefulWidget {
 }
 
 class _TerminalInputState extends State<TerminalInput> {
-  final TextEditingController _controller = TextEditingController();
+  TextEditingController? _ownController;
   final FocusNode _focusNode = FocusNode();
   int _historyIndex = -1;
 
+  TextEditingController get _controller =>
+      widget.controller ?? (_ownController ??= TextEditingController());
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(_onTextChanged);
+    _focusNode.onKeyEvent = (node, event) {
+      if (event is KeyDownEvent) {
+        if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+          _navigateHistory(true);
+          return KeyEventResult.handled;
+        } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+          _navigateHistory(false);
+          return KeyEventResult.handled;
+        }
+      }
+      return KeyEventResult.ignored;
+    };
+  }
+
   @override
   void dispose() {
-    _controller.dispose();
+    _controller.removeListener(_onTextChanged);
+    _ownController?.dispose();
     _focusNode.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    widget.onTextChanged?.call(_controller.text);
   }
 
   void _handleSubmit([String? value]) {
@@ -62,8 +96,6 @@ class _TerminalInputState extends State<TerminalInput> {
     _controller.clear();
     _historyIndex = -1;
     // Ensure keyboard stays open after submit on iOS.
-    // Use a microtask to re-request focus after the framework
-    // processes the onSubmitted dismiss.
     Future.microtask(() {
       if (mounted) _focusNode.requestFocus();
     });
@@ -122,52 +154,45 @@ class _TerminalInputState extends State<TerminalInput> {
               ),
             ),
             Expanded(
-              child: KeyboardListener(
-                focusNode: FocusNode(),
-                onKeyEvent: (event) {
-                  if (event is KeyDownEvent) {
-                    if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-                      _navigateHistory(true);
-                    } else if (event.logicalKey ==
-                        LogicalKeyboardKey.arrowDown) {
-                      _navigateHistory(false);
-                    }
-                  }
-                },
-                child: TextField(
-                  controller: _controller,
-                  focusNode: _focusNode,
-                  enabled: widget.enabled,
-                  style: VcrTypography.terminalInput,
-                  decoration: InputDecoration.collapsed(
-                    hintText: widget.enabled
-                        ? (widget.hintText ?? 'Enter command...')
-                        : 'Disconnected...',
-                    hintStyle:
-                        const TextStyle(color: VcrColors.textMuted),
-                  ),
-                  cursorColor: promptColor,
-                  onSubmitted: (_) => _handleSubmit(),
-                  textInputAction: TextInputAction.send,
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                enabled: widget.enabled,
+                style: VcrTypography.terminalInput,
+                decoration: InputDecoration.collapsed(
+                  hintText: widget.enabled
+                      ? (widget.hintText ?? 'Enter command...')
+                      : 'Disconnected...',
+                  hintStyle:
+                      const TextStyle(color: VcrColors.textMuted),
                 ),
+                cursorColor: promptColor,
+                onSubmitted: (_) => _handleSubmit(),
+                textInputAction: TextInputAction.send,
               ),
             ),
             if (widget.onTab != null)
-              IconButton(
-                icon: const Icon(Icons.keyboard_tab, size: 20),
-                color: VcrColors.textSecondary,
-                onPressed: widget.enabled ? widget.onTab : null,
-                splashRadius: 20,
-                tooltip: 'Tab',
-              ),
-            if (widget.onEsc != null)
-              IconButton(
-                icon: const Icon(Icons.cancel_outlined, size: 20),
-                color: VcrColors.textSecondary,
-                onPressed: widget.enabled ? widget.onEsc : null,
-                splashRadius: 20,
-                tooltip: 'Esc',
-              ),
+              widget.isTabLoading
+                  ? const Padding(
+                      padding: EdgeInsets.all(12),
+                      child: SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: VcrColors.accent,
+                        ),
+                      ),
+                    )
+                  : IconButton(
+                      icon: const Icon(Icons.keyboard_tab, size: 20),
+                      color: VcrColors.textSecondary,
+                      onPressed: widget.enabled
+                          ? () => widget.onTab!(_controller.text)
+                          : null,
+                      splashRadius: 20,
+                      tooltip: 'Tab',
+                    ),
             IconButton(
               icon: Icon(Icons.send, color: promptColor),
               onPressed: widget.enabled ? () => _handleSubmit() : null,

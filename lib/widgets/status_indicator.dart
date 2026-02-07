@@ -153,6 +153,10 @@ class _StatusIndicatorState extends State<StatusIndicator>
         return VcrColors.stateError;
       case AgentState.disconnected:
         return VcrColors.stateDisconnected;
+      case AgentState.claudeActive:
+        return VcrColors.stateClaude;
+      case AgentState.shellActive:
+        return VcrColors.stateShell;
     }
   }
 }

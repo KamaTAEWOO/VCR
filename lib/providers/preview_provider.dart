@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import '../models/agent_state.dart';
 import '../models/device_info.dart';
@@ -33,6 +35,10 @@ class PreviewProvider extends ChangeNotifier {
 
   /// Last received frame sequence number per device (skip duplicate notifies).
   final Map<String, int> _lastFrameSeq = {};
+
+  /// Throttle timer to limit frame notifyListeners to ~15fps max.
+  Timer? _frameThrottleTimer;
+  bool _frameDirty = false;
 
   // =========================================================================
   // Getters
@@ -169,14 +175,33 @@ class PreviewProvider extends ChangeNotifier {
       _lastFpsUpdate = now;
     }
 
-    // Skip notifyListeners if this is a duplicate frame seq for this device
+    // Skip if this is a duplicate frame seq for this device
     final lastSeq = _lastFrameSeq[effectiveDeviceId] ?? -1;
     if (seq >= 0 && seq == lastSeq && !fpsChanged) {
       return;
     }
     _lastFrameSeq[effectiveDeviceId] = seq;
 
-    notifyListeners();
+    // Throttle UI rebuilds to ~15fps max to avoid jank
+    if (fpsChanged) {
+      // FPS changes are infrequent, notify immediately
+      _frameDirty = false;
+      notifyListeners();
+    } else if (_frameThrottleTimer == null) {
+      // First frame in this window, notify immediately
+      notifyListeners();
+      _frameDirty = false;
+      _frameThrottleTimer = Timer(const Duration(milliseconds: 66), () {
+        _frameThrottleTimer = null;
+        if (_frameDirty) {
+          _frameDirty = false;
+          notifyListeners();
+        }
+      });
+    } else {
+      // Already throttled, mark dirty for next flush
+      _frameDirty = true;
+    }
   }
 
   // =========================================================================
@@ -218,6 +243,9 @@ class PreviewProvider extends ChangeNotifier {
     _deviceFrames.clear();
     _fps = 0;
     _frameCount = 0;
+    _frameThrottleTimer?.cancel();
+    _frameThrottleTimer = null;
+    _frameDirty = false;
     notifyListeners();
   }
 
@@ -230,6 +258,9 @@ class PreviewProvider extends ChangeNotifier {
     _agentState = AgentState.disconnected;
     _fps = 0;
     _frameCount = 0;
+    _frameThrottleTimer?.cancel();
+    _frameThrottleTimer = null;
+    _frameDirty = false;
     notifyListeners();
   }
 }

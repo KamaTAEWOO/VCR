@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import 'package:web_socket_channel/web_socket_channel.dart';
 
@@ -303,17 +304,26 @@ class WebSocketService {
     // Parse device identification fields (nullable for backward compat)
     final deviceFields = FrameData.parseDeviceFields(msg.payload);
 
+    // Decode base64 in a background isolate to avoid blocking the UI thread.
+    compute(_decodeBase64, data).then((bytes) {
+      if (bytes != null) {
+        previewProvider.updateFrame(
+          bytes,
+          seq: seq,
+          deviceId: deviceFields.deviceId,
+          deviceName: deviceFields.deviceName,
+          platform: deviceFields.platform,
+        );
+      }
+    });
+  }
+
+  /// Top-level function for isolate-based base64 decoding.
+  static Uint8List? _decodeBase64(String data) {
     try {
-      final bytes = base64Decode(data);
-      previewProvider.updateFrame(
-        Uint8List.fromList(bytes),
-        seq: seq,
-        deviceId: deviceFields.deviceId,
-        deviceName: deviceFields.deviceName,
-        platform: deviceFields.platform,
-      );
+      return Uint8List.fromList(base64Decode(data));
     } catch (_) {
-      // Failed to decode base64 -- skip frame.
+      return null;
     }
   }
 
@@ -362,6 +372,10 @@ class WebSocketService {
     // welcome arrives before shell is started on the agent side).
     if (!terminalProvider.shellActive) {
       terminalProvider.setShellActive(true);
+    }
+    // Intercept output during tab-completion mode.
+    if (terminalProvider.handleCompletionOutput(data.output)) {
+      return;
     }
     terminalProvider.writeToShell(data.output);
   }

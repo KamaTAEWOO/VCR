@@ -34,6 +34,8 @@ class VcrColors {
   static const Color stateBuilding = Color(0xFFD29922);
   static const Color stateError = Color(0xFFF85149);
   static const Color stateDisconnected = Color(0xFF484F58);
+  static const Color stateClaude = Color(0xFFBC8CFF);
+  static const Color stateShell = Color(0xFF3FB950);
 }
 
 // =============================================================================

@@ -12,7 +12,9 @@ enum AgentState {
   building,
   buildError,
   error,
-  disconnected;
+  disconnected,
+  claudeActive,
+  shellActive;
 
   /// Parse from wire-format string (snake_case from server).
   static AgentState fromString(String value) {
@@ -55,6 +57,10 @@ enum AgentState {
         return 'error';
       case AgentState.disconnected:
         return 'disconnected';
+      case AgentState.claudeActive:
+        return 'claude_active';
+      case AgentState.shellActive:
+        return 'shell_active';
     }
   }
 
@@ -77,6 +83,10 @@ enum AgentState {
         return 'Error';
       case AgentState.disconnected:
         return 'Disconnected';
+      case AgentState.claudeActive:
+        return 'Claude';
+      case AgentState.shellActive:
+        return 'Shell';
     }
   }
 

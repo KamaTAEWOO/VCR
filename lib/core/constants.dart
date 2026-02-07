@@ -55,4 +55,5 @@ class TerminalConstants {
   TerminalConstants._();
 
   static const int maxHistorySize = 100;
+  static const Duration claudeExitDelay = Duration(seconds: 1);
 }
