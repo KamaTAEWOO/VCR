@@ -164,28 +164,52 @@ class _StatusBar extends StatelessWidget {
                   },
                 ),
               ),
-              // Claude mode badge
+              // Claude/Shell mode toggle badge
               Consumer<TerminalProvider>(
                 builder: (context, terminalProvider, _) {
-                  if (!terminalProvider.isClaudeMode) {
+                  final isClaude = terminalProvider.isClaudeMode;
+                  final isOverride = terminalProvider.isManualOverride;
+                  // Hide badge when in auto shell mode (no override, no claude)
+                  if (!isClaude && !isOverride) {
                     return const SizedBox.shrink();
                   }
-                  return Container(
-                    margin: const EdgeInsets.only(right: Spacing.sm),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: Spacing.sm,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: VcrColors.warning.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(Radii.sm),
-                    ),
-                    child: Text(
-                      'Claude',
-                      style: VcrTypography.labelMedium.copyWith(
-                        color: VcrColors.warning,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
+                  final badgeColor =
+                      isClaude ? VcrColors.warning : VcrColors.accent;
+                  return GestureDetector(
+                    onTap: () => terminalProvider.toggleModeOverride(),
+                    child: Container(
+                      margin: const EdgeInsets.only(right: Spacing.sm),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: Spacing.sm,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: badgeColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(Radii.sm),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            isClaude ? 'Claude' : 'Shell',
+                            style: VcrTypography.labelMedium.copyWith(
+                              color: badgeColor,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (isOverride) ...[
+                            const SizedBox(width: 4),
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: const BoxDecoration(
+                                color: VcrColors.textMuted,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   );

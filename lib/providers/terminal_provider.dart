@@ -13,6 +13,7 @@ class TerminalProvider extends ChangeNotifier {
   int? _shellExitCode;
   String _foregroundProcess = '';
   bool _isAiToolActive = false;
+  bool? _manualModeOverride;
 
   // -- Getters --
 
@@ -25,7 +26,9 @@ class TerminalProvider extends ChangeNotifier {
   bool get shellExited => _shellExitCode != null;
   String get foregroundProcess => _foregroundProcess;
   bool get isAiToolActive => _isAiToolActive;
-  bool get isClaudeMode => _isAiToolActive;
+  bool get isClaudeMode =>
+      _manualModeOverride != null ? _manualModeOverride! : _isAiToolActive;
+  bool get isManualOverride => _manualModeOverride != null;
 
   // -- Mutations --
 
@@ -82,11 +85,24 @@ class TerminalProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Toggle manual mode override.
+  /// First call overrides to the opposite of the current auto-detected mode.
+  /// Second call clears the override, restoring auto-detection.
+  void toggleModeOverride() {
+    if (_manualModeOverride != null) {
+      _manualModeOverride = null;
+    } else {
+      _manualModeOverride = !_isAiToolActive;
+    }
+    notifyListeners();
+  }
+
   /// Update the foreground process info from the agent.
   void setForegroundProcess(String processName, bool isAiTool) {
     if (_foregroundProcess == processName && _isAiToolActive == isAiTool) return;
     _foregroundProcess = processName;
     _isAiToolActive = isAiTool;
+    _manualModeOverride = null;
     notifyListeners();
   }
 
@@ -110,6 +126,7 @@ class TerminalProvider extends ChangeNotifier {
     _shellExitCode = null;
     _foregroundProcess = '';
     _isAiToolActive = false;
+    _manualModeOverride = null;
     notifyListeners();
   }
 }
